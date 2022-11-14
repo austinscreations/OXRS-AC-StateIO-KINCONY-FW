@@ -135,6 +135,78 @@ OXRS_API api(mqtt);
 // Logging
 MqttLogger logger(mqttClient, "log", MqttLoggerMode::MqttAndSerial);
 
+/*--------------------------- Helpers -----------------*/
+uint8_t getMaxIndex()
+{
+  // Count how many MCPs were found
+  uint8_t pcfCount = 0;
+  for (uint8_t pcf2 = 0; pcf2  < PCF_COUNT; pcf2 ++)
+  {
+    if (bitRead(g_pcfs_found_di, pcf2) != 0) { pcfCount++; }
+  }
+
+  // Remember our indexes are 1-based
+  return pcfCount * PCF_PIN_COUNT;  
+}
+
+void publishEventOutput(uint8_t index, uint8_t type, uint8_t state)
+{
+  char outputType[8];
+  getOutputType(outputType, type);
+  char eventType[7];
+  getOutputEventType(eventType, type, state);
+
+  StaticJsonDocument<64> json;
+  json["index"] = index;
+  json["type"] = outputType;
+  json["event"] = eventType;
+  
+  // TODO - Exit early if no network connection
+  // if (!isNetworkConnected()) {return;}
+
+  boolean success = mqtt.publishStatus(json);
+  if (!success) 
+  {
+    logger.print(F("[stio] [failover] "));
+    serializeJson(json, logger);
+    logger.println();
+
+    // TODO: add failover handling code here
+  }
+}
+
+void publishEventInput(uint8_t index, uint8_t type, uint8_t state)
+{
+  // Calculate the port and channel for this index (all 1-based)
+  uint8_t port = ((index - 1) / 4) + 1;
+  uint8_t channel = index - ((port - 1) * 4);
+  
+  char inputType[9];
+  getInputType(inputType, type);
+  char eventType[7];
+  getInputEventType(eventType, type, state);
+
+  StaticJsonDocument<128> json;
+  json["port"] = port;
+  json["channel"] = channel;
+  json["index"] = index;
+  json["type"] = inputType;
+  json["event"] = eventType;
+
+  // TODO - Exit early if no network connection
+  // if (!isNetworkConnected()) {return;}
+
+  boolean success = mqtt.publishStatus(json);
+  if (!success) 
+  {
+    logger.print(F("[stio] [failover] "));
+    serializeJson(json, logger);
+    logger.println();
+
+    // TODO: add failover handling code here
+  }
+}
+
 /*--------------------------- JSON builders -----------------*/
 void getFirmwareJson(JsonVariant json)
 {
@@ -294,9 +366,275 @@ void mqttDisconnected(int state)
   }
 }
 
-void jsonCommand(JsonVariant json){}
+void jsonOutputCommand(JsonVariant json)
+{
+  uint8_t index = getIndex(json);
+  if (index == 0) return;
 
-void jsonConfig(JsonVariant json){}
+  // Work out the pcf and pin we are processing
+  uint8_t pcf1 = (index - 1) / g_pcf_output_pins;
+  uint8_t pin1 = (index - 1) % g_pcf_output_pins;
+
+  // Get the output type for this pin
+  uint8_t type = oxrsOutput[pcf1].getType(pin1);
+  
+  if (json.containsKey("type"))
+  {
+    if (parseOutputType(json["type"]) != type)
+    {
+      logger.println(F("[stio] command type doesn't match configured type"));
+      return;
+    }
+  }
+  
+  if (json.containsKey("command"))
+  {
+    if (json["command"].isNull() || strcmp(json["command"], "query") == 0)
+    {
+      // Publish a status event with the current state
+      uint8_t state = pcf8575_DO[pcf1].digitalRead(pin1);
+      publishEventOutput(index, type, state);
+    }
+    else
+    {
+      // Send this command down to our output handler to process
+      if (strcmp(json["command"], "on") == 0)
+      {
+        oxrsOutput[pcf1].handleCommand(pcf1, pin1, RELAY_ON);
+      }
+      else if (strcmp(json["command"], "off") == 0)
+      {
+        oxrsOutput[pcf1].handleCommand(pcf1, pin1, RELAY_OFF);
+      }
+      else 
+      {
+        logger.println(F("[stio] invalid command"));
+      }
+    }
+  }
+}
+
+void jsonCommand(JsonVariant json)
+{
+  if (json.containsKey("outputs"))
+  {
+    for (JsonVariant output : json["outputs"].as<JsonArray>())
+    {
+      jsonOutputCommand(output);
+    }
+  }
+}
+
+uint8_t parseInputType(const char * inputType)
+{
+  if (strcmp(inputType, "button")   == 0) { return BUTTON; }
+  if (strcmp(inputType, "contact")  == 0) { return CONTACT; }
+  if (strcmp(inputType, "press")    == 0) { return PRESS; }
+  if (strcmp(inputType, "rotary")   == 0) { return ROTARY; }
+  if (strcmp(inputType, "security") == 0) { return SECURITY; }
+  if (strcmp(inputType, "switch")   == 0) { return SWITCH; }
+  if (strcmp(inputType, "toggle")   == 0) { return TOGGLE; }
+
+  logger.println(F("[stio] invalid input type"));
+  return INVALID_INPUT_TYPE;
+}
+
+void setDefaultInputType(uint8_t inputType)
+{
+  // Set all pins on all MCPs to this default input type
+  for (uint8_t pcf2 = 0; pcf2 < PCF_COUNT; pcf2++)
+  {
+    if (bitRead(g_pcfs_found_di, pcf2) == 0)
+      continue;
+
+    for (uint8_t pin2 = 0; pin2 < PCF_PIN_COUNT; pin2++)
+    {
+      // Pass this update to the input handler
+      oxrsInput[pcf2].setType(pin2, inputType);
+    }
+  }
+}
+
+uint8_t getIndex(JsonVariant json)
+{
+  if (!json.containsKey("index"))
+  {
+    logger.println(F("[stio] missing index"));
+    return 0;
+  }
+  
+  uint8_t index = json["index"].as<uint8_t>();
+
+  // Check the index is valid for this device
+  if (index <= 0 || index > getMaxIndex())
+  {
+    logger.println(F("[stio] invalid index"));
+    return 0;
+  }
+
+  return index;
+}
+
+void setDefaultOutputType(uint8_t outputType)
+{
+  // Set all pins on all MCPs to this default output type
+  for (uint8_t pcf1 = 0; pcf1 < PCF_COUNT; pcf1++)
+  {
+    if (bitRead(g_pcfs_found_do, pcf1) == 0)
+      continue;
+
+    for (uint8_t pin1 = 0; pin1 < g_pcf_output_pins; pin1++)
+    {
+      oxrsOutput[pcf1].setType(pin1, outputType);
+    }
+  }
+}
+
+uint8_t parseOutputType(const char * outputType)
+{
+  if (strcmp(outputType, "relay") == 0) { return RELAY; }
+  if (strcmp(outputType, "motor") == 0) { return MOTOR; }
+  if (strcmp(outputType, "timer") == 0) { return TIMER; }
+
+  logger.println(F("[stio] invalid output type"));
+  return INVALID_OUTPUT_TYPE;
+}
+
+void jsonOutputConfig(JsonVariant json)
+{
+  uint8_t index = getIndex(json);
+  if (index == 0) return;
+
+  // Work out the MCP and pin we are configuring
+  uint8_t pcf1 = (index - 1) / g_pcf_output_pins;
+  uint8_t pin1 = (index - 1) % g_pcf_output_pins;
+
+  if (json.containsKey("type"))
+  {
+    uint8_t outputType = parseOutputType(json["type"]);    
+
+    if (outputType != INVALID_OUTPUT_TYPE)
+    {
+      oxrsOutput[pcf1].setType(pin1, outputType);
+    }
+  }
+  
+  if (json.containsKey("timerSeconds"))
+  {
+    if (json["timerSeconds"].isNull())
+    {
+      oxrsOutput[pcf1].setTimer(pin1, DEFAULT_TIMER_SECS);
+    }
+    else
+    {
+      oxrsOutput[pcf1].setTimer(pin1, json["timerSeconds"].as<int>());
+    }
+  }
+  
+  if (json.containsKey("interlockIndex"))
+  {
+    // If an empty message then treat as 'unlocked' - i.e. interlock with ourselves
+    if (json["interlockIndex"].isNull())
+    {
+      oxrsOutput[pcf1].setInterlock(pin1, pin1);
+    }
+    else
+    {
+      uint8_t interlock_index = json["interlockIndex"].as<uint8_t>();
+     
+      uint8_t interlock_pcf1 = (interlock_index - 1) / g_pcf_output_pins;
+      uint8_t interlock_pin1 = (interlock_index - 1) % g_pcf_output_pins;
+  
+      if (interlock_pcf1 == pcf1)
+      {
+        oxrsOutput[pcf1].setInterlock(pin1, interlock_pin1);
+      }
+      else
+      {
+        logger.println(F("[stio] lock must be with pin on same mcp"));
+      }
+    }
+  }
+}
+
+void jsonInputConfig(JsonVariant json)
+{
+  uint8_t index = getIndex(json);
+  if (index == 0) return;
+
+  // Work out the PCF and pin we are configuring
+  int pcf2 = (index - 1) / PCF_PIN_COUNT;
+  int pin2 = (index - 1) % PCF_PIN_COUNT;
+
+  if (json.containsKey("type"))
+  {
+    uint8_t inputType = parseInputType(json["type"]);    
+
+    if (inputType != INVALID_INPUT_TYPE)
+    {
+      // Pass this update to the input handler
+      oxrsInput[pcf2].setType(pin2, inputType);
+    }
+  }
+  
+  if (json.containsKey("invert"))
+  {
+    // Pass this update to the input handler
+    oxrsInput[pcf2].setInvert(pin2, json["invert"].as<bool>());
+  }
+
+  if (json.containsKey("disabled"))
+  {
+    // Pass this update to the input handler
+    oxrsInput[pcf2].setDisabled(pin2, json["invert"].as<bool>());
+  }
+}
+
+void jsonConfig(JsonVariant json)
+{
+  // OUTPUTS
+  if (json.containsKey("outputsPerMcp"))
+  {
+    g_pcf_output_pins = json["outputsPerMcp"].as<uint8_t>();
+  }
+  
+  if (json.containsKey("defaultOutputType"))
+  {
+    uint8_t outputType = parseOutputType(json["defaultOutputType"]);
+
+    if (outputType != INVALID_OUTPUT_TYPE)
+    {
+      setDefaultOutputType(outputType);
+    }
+  }
+
+  if (json.containsKey("outputs"))
+  {
+    for (JsonVariant output : json["outputs"].as<JsonArray>())
+    {
+      jsonOutputConfig(output);
+    }
+  }
+
+  // INPUTS
+  if (json.containsKey("defaultInputType"))
+  {
+    uint8_t inputType = parseInputType(json["defaultInputType"]);
+
+    if (inputType != INVALID_INPUT_TYPE)
+    {
+      setDefaultInputType(inputType);
+    }
+  }
+
+  if (json.containsKey("inputs"))
+  {
+    for (JsonVariant input : json["inputs"].as<JsonArray>())
+    {
+      jsonInputConfig(input);    
+    }
+  }
+}
 
 void mqttCallback(char * topic, uint8_t * payload, unsigned int length) 
 {
@@ -580,64 +918,6 @@ void getInputEventType(char eventType[], uint8_t type, uint8_t state)
     case TOGGLE:
       sprintf_P(eventType, PSTR("toggle"));
       break;
-  }
-}
-
-void publishEventOutput(uint8_t index, uint8_t type, uint8_t state)
-{
-  char outputType[8];
-  getOutputType(outputType, type);
-  char eventType[7];
-  getOutputEventType(eventType, type, state);
-
-  StaticJsonDocument<64> json;
-  json["index"] = index;
-  json["type"] = outputType;
-  json["event"] = eventType;
-  
-  // TODO - Exit early if no network connection
-  // if (!isNetworkConnected()) {return;}
-
-  boolean success = mqtt.publishStatus(json);
-  if (!success) 
-  {
-    logger.print(F("[stio] [failover] "));
-    serializeJson(json, logger);
-    logger.println();
-
-    // TODO: add failover handling code here
-  }
-}
-
-void publishEventInput(uint8_t index, uint8_t type, uint8_t state)
-{
-  // Calculate the port and channel for this index (all 1-based)
-  uint8_t port = ((index - 1) / 4) + 1;
-  uint8_t channel = index - ((port - 1) * 4);
-  
-  char inputType[9];
-  getInputType(inputType, type);
-  char eventType[7];
-  getInputEventType(eventType, type, state);
-
-  StaticJsonDocument<128> json;
-  json["port"] = port;
-  json["channel"] = channel;
-  json["index"] = index;
-  json["type"] = inputType;
-  json["event"] = eventType;
-
-  // TODO - Exit early if no network connection
-  // if (!isNetworkConnected()) {return;}
-
-  boolean success = mqtt.publishStatus(json);
-  if (!success) 
-  {
-    logger.print(F("[stio] [failover] "));
-    serializeJson(json, logger);
-    logger.println();
-
-    // TODO: add failover handling code here
   }
 }
 
