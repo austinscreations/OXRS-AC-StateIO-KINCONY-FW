@@ -86,7 +86,6 @@ const uint8_t PCF_COUNT             = sizeof(PCF_I2C_ADDRESS);
 #define ETH_PHY_MDC                 23                     // Pin# of the I²C clock signal for the Ethernet PHY
 #define ETH_PHY_MDIO                18                     // Pin# of the I²C IO signal for the Ethernet PHY
 #define ETH_PHY_ADDR                0                      // I²C-address of Ethernet PHY (0 or 1 for LAN8720, 31 for TLK110)
-#define ETH_RST_PIN                 5
 
 #endif
 
@@ -1028,16 +1027,6 @@ void initialiseEthernet()
 {
   // We continue initialisation inside this event handler
   WiFi.onEvent(ethernetEvent);
-
-  // Reset the Ethernet PHY
-  pinMode(ETH_RST_PIN, OUTPUT);
-  digitalWrite(ETH_RST_PIN, 0);
-  delay(200);
-  digitalWrite(ETH_RST_PIN, 1);
-  delay(200);
-  digitalWrite(ETH_RST_PIN, 0);
-  delay(200);
-  digitalWrite(ETH_RST_PIN, 1);
 
   // Start the Ethernet PHY and wait for events
   ETH.begin(ETH_PHY_ADDR, ETH_PHY_POWER, ETH_PHY_MDC, ETH_PHY_MDIO, ETH_PHY_TYPE, ETH_CLOCK_MODE);
