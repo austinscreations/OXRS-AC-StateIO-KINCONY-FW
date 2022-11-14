@@ -50,8 +50,8 @@
 
 /*--------------------------- Constants ----------------------------------*/
 // TWO i2c buses
-TwoWire Wire  = TwoWire(0);
-TwoWire Wire1 = TwoWire(1);
+TwoWire I2Cone  = TwoWire(0);
+TwoWire I2Ctwo = TwoWire(1);
 
 // Serial
 #define SERIAL_BAUD_RATE            115200
@@ -150,6 +150,236 @@ uint8_t getMaxIndex()
   // Remember our indexes are 1-based
   return pcfCount * PCF_PIN_COUNT;  
 }
+
+void getOutputType(char outputType[], uint8_t type)
+{
+  // Determine what type of output we have
+  sprintf_P(outputType, PSTR("error"));
+  switch (type)
+  {
+    case MOTOR:
+      sprintf_P(outputType, PSTR("motor"));
+      break;
+    case RELAY:
+      sprintf_P(outputType, PSTR("relay"));
+      break;
+    case TIMER:
+      sprintf_P(outputType, PSTR("timer"));
+      break;
+  }
+}
+
+void getOutputEventType(char eventType[], uint8_t type, uint8_t state)
+{
+  // Determine what event we need to publish
+  sprintf_P(eventType, PSTR("error"));
+  switch (state)
+  {
+    case RELAY_ON:
+      sprintf_P(eventType, PSTR("on"));
+      break;
+    case RELAY_OFF:
+      sprintf_P(eventType, PSTR("off"));
+      break;
+  }
+}
+
+void getInputType(char inputType[], uint8_t type)
+{
+  // Determine what type of input we have
+  sprintf_P(inputType, PSTR("error"));
+  switch (type)
+  {
+    case BUTTON:
+      sprintf_P(inputType, PSTR("button"));
+      break;
+    case CONTACT:
+      sprintf_P(inputType, PSTR("contact"));
+      break;
+    case PRESS:
+      sprintf_P(inputType, PSTR("press"));
+      break;
+    case ROTARY:
+      sprintf_P(inputType, PSTR("rotary"));
+      break;
+    case SECURITY:
+      sprintf_P(inputType, PSTR("security"));
+      break;
+    case SWITCH:
+      sprintf_P(inputType, PSTR("switch"));
+      break;
+    case TOGGLE:
+      sprintf_P(inputType, PSTR("toggle"));
+      break;
+  }
+}
+
+void getInputEventType(char eventType[], uint8_t type, uint8_t state)
+{
+  // Determine what event we need to publish
+  sprintf_P(eventType, PSTR("error"));
+  switch (type)
+  {
+    case BUTTON:
+      switch (state)
+      {
+        case HOLD_EVENT:
+          sprintf_P(eventType, PSTR("hold"));
+          break;
+        case 1:
+          sprintf_P(eventType, PSTR("single"));
+          break;
+        case 2:
+          sprintf_P(eventType, PSTR("double"));
+          break;
+        case 3:
+          sprintf_P(eventType, PSTR("triple"));
+          break;
+        case 4:
+          sprintf_P(eventType, PSTR("quad"));
+          break;
+        case 5:
+          sprintf_P(eventType, PSTR("penta"));
+          break;
+      }
+      break;
+    case CONTACT:
+      switch (state)
+      {
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("closed"));
+          break;
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("open"));
+          break;
+      }
+      break;
+    case PRESS:
+      sprintf_P(eventType, PSTR("press"));
+      break;
+    case ROTARY:
+      switch (state)
+      {
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("up"));
+          break;
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("down"));
+          break;
+      }
+      break;
+    case SECURITY:
+      switch (state)
+      {
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("normal"));
+          break;
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("alarm"));
+          break;
+        case TAMPER_EVENT:
+          sprintf_P(eventType, PSTR("tamper"));
+          break;
+        case SHORT_EVENT:
+          sprintf_P(eventType, PSTR("short"));
+          break;
+        case FAULT_EVENT:
+          sprintf_P(eventType, PSTR("fault"));
+          break;
+      }
+      break;
+    case SWITCH:
+      switch (state)
+      {
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("on"));
+          break;
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("off"));
+          break;
+      }
+      break;
+    case TOGGLE:
+      sprintf_P(eventType, PSTR("toggle"));
+      break;
+  }
+}
+
+uint8_t parseInputType(const char * inputType)
+{
+  if (strcmp(inputType, "button")   == 0) { return BUTTON; }
+  if (strcmp(inputType, "contact")  == 0) { return CONTACT; }
+  if (strcmp(inputType, "press")    == 0) { return PRESS; }
+  if (strcmp(inputType, "rotary")   == 0) { return ROTARY; }
+  if (strcmp(inputType, "security") == 0) { return SECURITY; }
+  if (strcmp(inputType, "switch")   == 0) { return SWITCH; }
+  if (strcmp(inputType, "toggle")   == 0) { return TOGGLE; }
+
+  logger.println(F("[stio] invalid input type"));
+  return INVALID_INPUT_TYPE;
+}
+
+void setDefaultInputType(uint8_t inputType)
+{
+  // Set all pins on all MCPs to this default input type
+  for (uint8_t pcf2 = 0; pcf2 < PCF_COUNT; pcf2++)
+  {
+    if (bitRead(g_pcfs_found_di, pcf2) == 0)
+      continue;
+
+    for (uint8_t pin2 = 0; pin2 < PCF_PIN_COUNT; pin2++)
+    {
+      // Pass this update to the input handler
+      oxrsInput[pcf2].setType(pin2, inputType);
+    }
+  }
+}
+
+uint8_t getIndex(JsonVariant json)
+{
+  if (!json.containsKey("index"))
+  {
+    logger.println(F("[stio] missing index"));
+    return 0;
+  }
+  
+  uint8_t index = json["index"].as<uint8_t>();
+
+  // Check the index is valid for this device
+  if (index <= 0 || index > getMaxIndex())
+  {
+    logger.println(F("[stio] invalid index"));
+    return 0;
+  }
+
+  return index;
+}
+
+void setDefaultOutputType(uint8_t outputType)
+{
+  // Set all pins on all MCPs to this default output type
+  for (uint8_t pcf1 = 0; pcf1 < PCF_COUNT; pcf1++)
+  {
+    if (bitRead(g_pcfs_found_do, pcf1) == 0)
+      continue;
+
+    for (uint8_t pin1 = 0; pin1 < g_pcf_output_pins; pin1++)
+    {
+      oxrsOutput[pcf1].setType(pin1, outputType);
+    }
+  }
+}
+
+uint8_t parseOutputType(const char * outputType)
+{
+  if (strcmp(outputType, "relay") == 0) { return RELAY; }
+  if (strcmp(outputType, "motor") == 0) { return MOTOR; }
+  if (strcmp(outputType, "timer") == 0) { return TIMER; }
+
+  logger.println(F("[stio] invalid output type"));
+  return INVALID_OUTPUT_TYPE;
+}
+
 
 void publishEventOutput(uint8_t index, uint8_t type, uint8_t state)
 {
@@ -564,81 +794,6 @@ void jsonCommand(JsonVariant json)
   }
 }
 
-uint8_t parseInputType(const char * inputType)
-{
-  if (strcmp(inputType, "button")   == 0) { return BUTTON; }
-  if (strcmp(inputType, "contact")  == 0) { return CONTACT; }
-  if (strcmp(inputType, "press")    == 0) { return PRESS; }
-  if (strcmp(inputType, "rotary")   == 0) { return ROTARY; }
-  if (strcmp(inputType, "security") == 0) { return SECURITY; }
-  if (strcmp(inputType, "switch")   == 0) { return SWITCH; }
-  if (strcmp(inputType, "toggle")   == 0) { return TOGGLE; }
-
-  logger.println(F("[stio] invalid input type"));
-  return INVALID_INPUT_TYPE;
-}
-
-void setDefaultInputType(uint8_t inputType)
-{
-  // Set all pins on all MCPs to this default input type
-  for (uint8_t pcf2 = 0; pcf2 < PCF_COUNT; pcf2++)
-  {
-    if (bitRead(g_pcfs_found_di, pcf2) == 0)
-      continue;
-
-    for (uint8_t pin2 = 0; pin2 < PCF_PIN_COUNT; pin2++)
-    {
-      // Pass this update to the input handler
-      oxrsInput[pcf2].setType(pin2, inputType);
-    }
-  }
-}
-
-uint8_t getIndex(JsonVariant json)
-{
-  if (!json.containsKey("index"))
-  {
-    logger.println(F("[stio] missing index"));
-    return 0;
-  }
-  
-  uint8_t index = json["index"].as<uint8_t>();
-
-  // Check the index is valid for this device
-  if (index <= 0 || index > getMaxIndex())
-  {
-    logger.println(F("[stio] invalid index"));
-    return 0;
-  }
-
-  return index;
-}
-
-void setDefaultOutputType(uint8_t outputType)
-{
-  // Set all pins on all MCPs to this default output type
-  for (uint8_t pcf1 = 0; pcf1 < PCF_COUNT; pcf1++)
-  {
-    if (bitRead(g_pcfs_found_do, pcf1) == 0)
-      continue;
-
-    for (uint8_t pin1 = 0; pin1 < g_pcf_output_pins; pin1++)
-    {
-      oxrsOutput[pcf1].setType(pin1, outputType);
-    }
-  }
-}
-
-uint8_t parseOutputType(const char * outputType)
-{
-  if (strcmp(outputType, "relay") == 0) { return RELAY; }
-  if (strcmp(outputType, "motor") == 0) { return MOTOR; }
-  if (strcmp(outputType, "timer") == 0) { return TIMER; }
-
-  logger.println(F("[stio] invalid output type"));
-  return INVALID_OUTPUT_TYPE;
-}
-
 void jsonOutputConfig(JsonVariant json)
 {
   uint8_t index = getIndex(json);
@@ -905,161 +1060,6 @@ void initialiseSerial()
   logger.println();
 }
 
-/*--------------------------- Program Helpers -------------------------------*/
-void getOutputType(char outputType[], uint8_t type)
-{
-  // Determine what type of output we have
-  sprintf_P(outputType, PSTR("error"));
-  switch (type)
-  {
-    case MOTOR:
-      sprintf_P(outputType, PSTR("motor"));
-      break;
-    case RELAY:
-      sprintf_P(outputType, PSTR("relay"));
-      break;
-    case TIMER:
-      sprintf_P(outputType, PSTR("timer"));
-      break;
-  }
-}
-
-void getOutputEventType(char eventType[], uint8_t type, uint8_t state)
-{
-  // Determine what event we need to publish
-  sprintf_P(eventType, PSTR("error"));
-  switch (state)
-  {
-    case RELAY_ON:
-      sprintf_P(eventType, PSTR("on"));
-      break;
-    case RELAY_OFF:
-      sprintf_P(eventType, PSTR("off"));
-      break;
-  }
-}
-
-void getInputType(char inputType[], uint8_t type)
-{
-  // Determine what type of input we have
-  sprintf_P(inputType, PSTR("error"));
-  switch (type)
-  {
-    case BUTTON:
-      sprintf_P(inputType, PSTR("button"));
-      break;
-    case CONTACT:
-      sprintf_P(inputType, PSTR("contact"));
-      break;
-    case PRESS:
-      sprintf_P(inputType, PSTR("press"));
-      break;
-    case ROTARY:
-      sprintf_P(inputType, PSTR("rotary"));
-      break;
-    case SECURITY:
-      sprintf_P(inputType, PSTR("security"));
-      break;
-    case SWITCH:
-      sprintf_P(inputType, PSTR("switch"));
-      break;
-    case TOGGLE:
-      sprintf_P(inputType, PSTR("toggle"));
-      break;
-  }
-}
-
-void getInputEventType(char eventType[], uint8_t type, uint8_t state)
-{
-  // Determine what event we need to publish
-  sprintf_P(eventType, PSTR("error"));
-  switch (type)
-  {
-    case BUTTON:
-      switch (state)
-      {
-        case HOLD_EVENT:
-          sprintf_P(eventType, PSTR("hold"));
-          break;
-        case 1:
-          sprintf_P(eventType, PSTR("single"));
-          break;
-        case 2:
-          sprintf_P(eventType, PSTR("double"));
-          break;
-        case 3:
-          sprintf_P(eventType, PSTR("triple"));
-          break;
-        case 4:
-          sprintf_P(eventType, PSTR("quad"));
-          break;
-        case 5:
-          sprintf_P(eventType, PSTR("penta"));
-          break;
-      }
-      break;
-    case CONTACT:
-      switch (state)
-      {
-        case LOW_EVENT:
-          sprintf_P(eventType, PSTR("closed"));
-          break;
-        case HIGH_EVENT:
-          sprintf_P(eventType, PSTR("open"));
-          break;
-      }
-      break;
-    case PRESS:
-      sprintf_P(eventType, PSTR("press"));
-      break;
-    case ROTARY:
-      switch (state)
-      {
-        case LOW_EVENT:
-          sprintf_P(eventType, PSTR("up"));
-          break;
-        case HIGH_EVENT:
-          sprintf_P(eventType, PSTR("down"));
-          break;
-      }
-      break;
-    case SECURITY:
-      switch (state)
-      {
-        case HIGH_EVENT:
-          sprintf_P(eventType, PSTR("normal"));
-          break;
-        case LOW_EVENT:
-          sprintf_P(eventType, PSTR("alarm"));
-          break;
-        case TAMPER_EVENT:
-          sprintf_P(eventType, PSTR("tamper"));
-          break;
-        case SHORT_EVENT:
-          sprintf_P(eventType, PSTR("short"));
-          break;
-        case FAULT_EVENT:
-          sprintf_P(eventType, PSTR("fault"));
-          break;
-      }
-      break;
-    case SWITCH:
-      switch (state)
-      {
-        case LOW_EVENT:
-          sprintf_P(eventType, PSTR("on"));
-          break;
-        case HIGH_EVENT:
-          sprintf_P(eventType, PSTR("off"));
-          break;
-      }
-      break;
-    case TOGGLE:
-      sprintf_P(eventType, PSTR("toggle"));
-      break;
-  }
-}
-
 /*--------------------------- Event Handler -------------------------------*/
 void inputEvent(uint8_t id, uint8_t input, uint8_t type, uint8_t state)
 {
@@ -1098,8 +1098,8 @@ void scanI2CBus()
     logger.print(F("..."));
 
     // Check if there is anything responding on this address
-    Wire.beginTransmission(PCF_I2C_ADDRESS[pcf1]);
-    if (Wire.endTransmission() == 0)
+    I2Cone.beginTransmission(PCF_I2C_ADDRESS[pcf1]);
+    if (I2Cone.endTransmission() == 0)
     {
       bitWrite(g_pcfs_found_do, pcf1, 1);
 
@@ -1131,8 +1131,8 @@ void scanI2CBus()
     logger.print(F("..."));
 
     // Check if there is anything responding on this address
-    Wire1.beginTransmission(PCF_I2C_ADDRESS[pcf2]);
-    if (Wire1.endTransmission() == 0)
+    I2Ctwo.beginTransmission(PCF_I2C_ADDRESS[pcf2]);
+    if (I2Ctwo.endTransmission() == 0)
     {
       bitWrite(g_pcfs_found_di, pcf2, 1);
       
@@ -1164,8 +1164,8 @@ void setup()
   initialiseSerial();  
 
   // Start the I2C bus
-  Wire.begin(I2C_SDA, I2C_SCL);
-  Wire1.begin(I2C_SDA2, I2C_SCL2);
+  I2Cone.begin(I2C_SDA, I2C_SCL);
+  I2Ctwo.begin(I2C_SDA2, I2C_SCL2);
 
   // Scan the I2C bus and set up I/O buffers
   scanI2CBus();
