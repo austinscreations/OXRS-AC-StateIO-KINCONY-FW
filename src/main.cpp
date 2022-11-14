@@ -428,6 +428,219 @@ void initialiseSerial()
   logger.println();
 }
 
+/*--------------------------- Program Helpers -------------------------------*/
+void getOutputType(char outputType[], uint8_t type)
+{
+  // Determine what type of output we have
+  sprintf_P(outputType, PSTR("error"));
+  switch (type)
+  {
+    case MOTOR:
+      sprintf_P(outputType, PSTR("motor"));
+      break;
+    case RELAY:
+      sprintf_P(outputType, PSTR("relay"));
+      break;
+    case TIMER:
+      sprintf_P(outputType, PSTR("timer"));
+      break;
+  }
+}
+
+void getOutputEventType(char eventType[], uint8_t type, uint8_t state)
+{
+  // Determine what event we need to publish
+  sprintf_P(eventType, PSTR("error"));
+  switch (state)
+  {
+    case RELAY_ON:
+      sprintf_P(eventType, PSTR("on"));
+      break;
+    case RELAY_OFF:
+      sprintf_P(eventType, PSTR("off"));
+      break;
+  }
+}
+
+void getInputType(char inputType[], uint8_t type)
+{
+  // Determine what type of input we have
+  sprintf_P(inputType, PSTR("error"));
+  switch (type)
+  {
+    case BUTTON:
+      sprintf_P(inputType, PSTR("button"));
+      break;
+    case CONTACT:
+      sprintf_P(inputType, PSTR("contact"));
+      break;
+    case PRESS:
+      sprintf_P(inputType, PSTR("press"));
+      break;
+    case ROTARY:
+      sprintf_P(inputType, PSTR("rotary"));
+      break;
+    case SECURITY:
+      sprintf_P(inputType, PSTR("security"));
+      break;
+    case SWITCH:
+      sprintf_P(inputType, PSTR("switch"));
+      break;
+    case TOGGLE:
+      sprintf_P(inputType, PSTR("toggle"));
+      break;
+  }
+}
+
+void getInputEventType(char eventType[], uint8_t type, uint8_t state)
+{
+  // Determine what event we need to publish
+  sprintf_P(eventType, PSTR("error"));
+  switch (type)
+  {
+    case BUTTON:
+      switch (state)
+      {
+        case HOLD_EVENT:
+          sprintf_P(eventType, PSTR("hold"));
+          break;
+        case 1:
+          sprintf_P(eventType, PSTR("single"));
+          break;
+        case 2:
+          sprintf_P(eventType, PSTR("double"));
+          break;
+        case 3:
+          sprintf_P(eventType, PSTR("triple"));
+          break;
+        case 4:
+          sprintf_P(eventType, PSTR("quad"));
+          break;
+        case 5:
+          sprintf_P(eventType, PSTR("penta"));
+          break;
+      }
+      break;
+    case CONTACT:
+      switch (state)
+      {
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("closed"));
+          break;
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("open"));
+          break;
+      }
+      break;
+    case PRESS:
+      sprintf_P(eventType, PSTR("press"));
+      break;
+    case ROTARY:
+      switch (state)
+      {
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("up"));
+          break;
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("down"));
+          break;
+      }
+      break;
+    case SECURITY:
+      switch (state)
+      {
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("normal"));
+          break;
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("alarm"));
+          break;
+        case TAMPER_EVENT:
+          sprintf_P(eventType, PSTR("tamper"));
+          break;
+        case SHORT_EVENT:
+          sprintf_P(eventType, PSTR("short"));
+          break;
+        case FAULT_EVENT:
+          sprintf_P(eventType, PSTR("fault"));
+          break;
+      }
+      break;
+    case SWITCH:
+      switch (state)
+      {
+        case LOW_EVENT:
+          sprintf_P(eventType, PSTR("on"));
+          break;
+        case HIGH_EVENT:
+          sprintf_P(eventType, PSTR("off"));
+          break;
+      }
+      break;
+    case TOGGLE:
+      sprintf_P(eventType, PSTR("toggle"));
+      break;
+  }
+}
+
+void publishEventOutput(uint8_t index, uint8_t type, uint8_t state)
+{
+  char outputType[8];
+  getOutputType(outputType, type);
+  char eventType[7];
+  getOutputEventType(eventType, type, state);
+
+  StaticJsonDocument<64> json;
+  json["index"] = index;
+  json["type"] = outputType;
+  json["event"] = eventType;
+  
+  // TODO - Exit early if no network connection
+  // if (!isNetworkConnected()) {return;}
+
+  boolean success = mqtt.publishStatus(json);
+  if (!success) 
+  {
+    logger.print(F("[stio] [failover] "));
+    serializeJson(json, logger);
+    logger.println();
+
+    // TODO: add failover handling code here
+  }
+}
+
+void publishEventInput(uint8_t index, uint8_t type, uint8_t state)
+{
+  // Calculate the port and channel for this index (all 1-based)
+  uint8_t port = ((index - 1) / 4) + 1;
+  uint8_t channel = index - ((port - 1) * 4);
+  
+  char inputType[9];
+  getInputType(inputType, type);
+  char eventType[7];
+  getInputEventType(eventType, type, state);
+
+  StaticJsonDocument<128> json;
+  json["port"] = port;
+  json["channel"] = channel;
+  json["index"] = index;
+  json["type"] = inputType;
+  json["event"] = eventType;
+
+  // TODO - Exit early if no network connection
+  // if (!isNetworkConnected()) {return;}
+
+  boolean success = mqtt.publishStatus(json);
+  if (!success) 
+  {
+    logger.print(F("[stio] [failover] "));
+    serializeJson(json, logger);
+    logger.println();
+
+    // TODO: add failover handling code here
+  }
+}
+
 /*--------------------------- Event Handler -------------------------------*/
 void inputEvent(uint8_t id, uint8_t input, uint8_t type, uint8_t state)
 {
@@ -436,7 +649,7 @@ void inputEvent(uint8_t id, uint8_t input, uint8_t type, uint8_t state)
   uint8_t index = (PCF_PIN_COUNT * pcf) + input + 1;
 
   // Publish the event
-  // publishEvent(index, type, state);
+  publishEventInput(index, type, state);
 }
 
 void outputEvent(uint8_t id, uint8_t output, uint8_t type, uint8_t state)
@@ -451,7 +664,7 @@ void outputEvent(uint8_t id, uint8_t output, uint8_t type, uint8_t state)
   pcf8575_DO[pcf].digitalWrite(pin, state);
 
   // Publish the event
-  // publishEvent(index, type, state);
+  publishEventOutput(index, type, state);
 }
 
 /*--------------------------- I2C -------------------------------*/
