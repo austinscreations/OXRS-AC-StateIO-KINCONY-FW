@@ -18,6 +18,8 @@
 /*------------------------- I2C pins ----------------------------------*/
 //#define I2C_SDA   0
 //#define I2C_SCL   1
+//#define I2C_SDA2   0
+//#define I2C_SCL2   1
 
 //rack32   = 21  22
 //LilyGO   = 33  32
@@ -67,7 +69,7 @@ TwoWire Wire1 = TwoWire(1);
 #define INVALID_INPUT_TYPE          99
 
 // Internal constants used when output type parsing fails
-#define       INVALID_OUTPUT_TYPE   99
+#define INVALID_OUTPUT_TYPE         99
 
 // Can have up to 8x PCF8575 on a single I2C bus
 const byte    PCF_I2C_ADDRESS[]     = { 0x24, 0x25, 0x21, 0x22, 0x26, 0x27, 0x20, 0x23 };
@@ -262,6 +264,28 @@ void getNetworkJson(JsonVariant json)
   network["mac"] = mac_display;
 }
 
+void createOutputTypeEnum(JsonObject parent)
+{
+  JsonArray typeEnum = parent.createNestedArray("enum");
+
+  typeEnum.add("relay");
+  typeEnum.add("motor");
+  typeEnum.add("timer");  
+}
+
+void createInputTypeEnum(JsonObject parent)
+{
+  JsonArray typeEnum = parent.createNestedArray("enum");
+  
+  typeEnum.add("button");
+  typeEnum.add("contact");
+  typeEnum.add("press");
+  typeEnum.add("rotary");
+  typeEnum.add("security");
+  typeEnum.add("switch");
+  typeEnum.add("toggle");
+}
+
 void getConfigSchemaJson(JsonVariant json)
 {
   JsonObject configSchema = json.createNestedObject("configSchema");
@@ -271,8 +295,92 @@ void getConfigSchemaJson(JsonVariant json)
   configSchema["title"] = FW_SHORT_NAME;
   configSchema["type"] = "object";
 
+  // OUTPUTS
   JsonObject properties = configSchema.createNestedObject("properties");
 
+  JsonObject outputsPerMcp = properties.createNestedObject("outputsPerMcp");
+  outputsPerMcp["title"] = "Number Of Outputs Per MCP";
+  outputsPerMcp["description"] = "Number of outputs connected to each MCP23017 I/O chip, which is dependent on the relay driver used (must be either 8 or 16, defaults to 16).";
+  outputsPerMcp["type"] = "integer";
+  outputsPerMcp["minimum"] = 8;
+  outputsPerMcp["maximum"] = PCF_PIN_COUNT;
+  outputsPerMcp["multipleOf"] = 8;
+
+  JsonObject defaultOutputType = properties.createNestedObject("defaultOutputType");
+  defaultOutputType["title"] = "Default Output Type";
+  defaultOutputType["description"] = "Set the default output type for anything without explicit configuration below. Defaults to ‘relay’.";
+  createOutputTypeEnum(defaultOutputType);
+
+  JsonObject outputs1 = properties.createNestedObject("outputs");
+  outputs1["title"] = "Output Configuration";
+  outputs1["description"] = "Add configuration for each output in use on your device. The 1-based index specifies which output you wish to configure. The type defines how an output is controlled. For ‘timer’ outputs you can define how long it should stay ON (defaults to 60 seconds). Interlocking two outputs ensures they are never both on at the same time (useful for controlling motors).";
+  outputs1["type"] = "array";
+  
+  JsonObject items1 = outputs1.createNestedObject("items");
+  items1["type"] = "object";
+
+  JsonObject properties1 = items1.createNestedObject("properties");
+
+  JsonObject index1 = properties1.createNestedObject("index");
+  index1["title"] = "Index";
+  index1["type"] = "integer";
+  index1["minimum"] = 1;
+  index1["maximum"] = getMaxIndex();
+
+  JsonObject type1 = properties1.createNestedObject("type");
+  type1["title"] = "Type";
+  createOutputTypeEnum(type1);
+
+  JsonObject timerSeconds1 = properties1.createNestedObject("timerSeconds");
+  timerSeconds1["title"] = "Timer (seconds)";
+  timerSeconds1["type"] = "integer";
+  timerSeconds1["minimum"] = 1;
+
+  JsonObject interlockIndex1 = properties1.createNestedObject("interlockIndex");
+  interlockIndex1["title"] = "Interlock With Index";
+  interlockIndex1["type"] = "integer";
+  interlockIndex1["minimum"] = 1;
+  interlockIndex1["maximum"] = getMaxIndex();
+
+  JsonArray required1 = items1.createNestedArray("required");
+  required1.add("index");
+
+  // INPUTS
+  JsonObject defaultInputType2 = properties.createNestedObject("defaultInputType");
+  defaultInputType2["title"] = "Default Input Type";
+  defaultInputType2["description"] = "Set the default input type for anything without explicit configuration below. Defaults to ‘switch’.";
+  createInputTypeEnum(defaultInputType2);
+
+  JsonObject inputs2 = properties.createNestedObject("inputs");
+  inputs2["title"] = "Input Configuration";
+  inputs2["description"] = "Add configuration for each input in use on your device. The 1-based index specifies which input you wish to configure. The type defines how an input is monitored and what events are emitted. Inverting an input swaps the 'active' state (only useful for 'contact' and 'switch' inputs). Disabling an input stops any events being emitted.";
+  inputs2["type"] = "array";
+  
+  JsonObject items2 = inputs2.createNestedObject("items");
+  items2["type"] = "object";
+
+  JsonObject properties2 = items2.createNestedObject("properties");
+
+  JsonObject index2 = properties2.createNestedObject("index");
+  index2["title"] = "Index";
+  index2["type"] = "integer";
+  index2["minimum"] = 1;
+  index2["maximum"] = getMaxIndex();
+
+  JsonObject type2 = properties2.createNestedObject("type");
+  type2["title"] = "Type";
+  createInputTypeEnum(type2);
+
+  JsonObject invert2 = properties2.createNestedObject("invert");
+  invert2["title"] = "Invert";
+  invert2["type"] = "boolean";
+
+  JsonObject disabled2 = properties2.createNestedObject("disabled");
+  disabled2["title"] = "Disabled";
+  disabled2["type"] = "boolean";
+
+  JsonArray required2 = items2.createNestedArray("required");
+  required2.add("index");
 }
 
 void getCommandSchemaJson(JsonVariant json)
@@ -285,7 +393,38 @@ void getCommandSchemaJson(JsonVariant json)
   commandSchema["type"] = "object";
 
   JsonObject properties = commandSchema.createNestedObject("properties");
+
+  JsonObject outputs1 = properties.createNestedObject("outputs");
+  outputs1["title"] = "Output Commands";
+  outputs1["description"] = "Send commands to one or more outputs on your device. The 1-based index specifies which output you wish to command. The type is used to validate the configuration for this output matches the command. Supported commands are ‘on’ or ‘off’ to change the output state, or ‘query’ to publish the current state to MQTT.";
+  outputs1["type"] = "array";
   
+  JsonObject items1 = outputs1.createNestedObject("items");
+  items1["type"] = "object";
+
+  JsonObject properties1 = items1.createNestedObject("properties");
+
+  JsonObject index1 = properties1.createNestedObject("index");
+  index1["title"] = "Index";
+  index1["type"] = "integer";
+  index1["minimum"] = 1;
+  index1["maximum"] = getMaxIndex();
+
+  JsonObject type1 = properties1.createNestedObject("type");
+  type1["title"] = "Type";
+  createOutputTypeEnum(type1);
+
+  JsonObject command1 = properties1.createNestedObject("command");
+  command1["title"] = "Command";
+  command1["type"] = "string";
+  JsonArray commandEnum1 = command1.createNestedArray("enum");
+  commandEnum1.add("query");
+  commandEnum1.add("on");
+  commandEnum1.add("off");
+
+  JsonArray required1 = items1.createNestedArray("required");
+  required1.add("index");
+  required1.add("command");
 }
 
 void apiAdopt(JsonVariant json)
