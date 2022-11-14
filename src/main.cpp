@@ -554,4 +554,27 @@ void loop()
   // Handle any API requests
   WiFiClient client = server.available();
   api.loop(&client);
+
+  // OUTPUTS - Iterate through each of the MCP23017s
+  for (uint8_t pcf1 = 0; pcf1 < PCF_COUNT; pcf1++)
+  {
+    if (bitRead(g_pcfs_found_do, pcf1) == 0) 
+      continue;
+    
+    // Check for any output events
+    oxrsOutput[pcf1].process();
+  }
+
+  // INPUTS - Iterate through each of the MCP23017s
+  for (uint8_t pcf2 = 0; pcf2 < PCF_COUNT; pcf2++)
+  {
+    if (bitRead(g_pcfs_found_di, pcf2) == 0)
+      continue;
+
+    // Read the values for all 16 pins on this MCP
+    uint16_t io_value = pcf8575_DI[pcf2].digitalReadWord();
+
+    // Check for any input events
+    oxrsInput[pcf2].process(pcf2, io_value);
+  }
 }
