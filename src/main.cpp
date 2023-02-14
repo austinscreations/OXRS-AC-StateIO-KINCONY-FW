@@ -466,8 +466,8 @@ void getSystemJson(JsonVariant json)
   system["sketchSpaceUsedBytes"] = ESP.getSketchSize();
   system["sketchSpaceTotalBytes"] = ESP.getFreeSketchSpace();
 
-  system["fileSystemUsedBytes"] = SPIFFS.usedBytes();
-  system["fileSystemTotalBytes"] = SPIFFS.totalBytes();
+  system["fileSystemUsedBytes"] = LittleFS.usedBytes();
+  system["fileSystemTotalBytes"] = LittleFS.totalBytes();
 
 }
 
